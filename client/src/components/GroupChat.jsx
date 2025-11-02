@@ -15,6 +15,7 @@ const GroupChat = ({ userData }) => {
   const [reactions, setReactions] = useState({});
   const [showEmojiPicker, setShowEmojiPicker] = useState(null);
   const [typingUsers, setTypingUsers] = useState([]);
+  const [activeUsersCount, setActiveUsersCount] = useState(0);
 
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -78,6 +79,47 @@ const GroupChat = ({ userData }) => {
 
     return () => clearInterval(interval);
   }, [userData]);
+
+  // Enviar heartbeat para indicar que el usuario está activo (cada 15 segundos)
+  useEffect(() => {
+    const sendHeartbeat = async () => {
+      try {
+        await axios.post('http://localhost:3001/api/messages/active/heartbeat', {
+          userName: userData.nombre,
+          userColonia: userData.colonia
+        });
+      } catch (error) {
+        console.error('Error enviando heartbeat:', error);
+      }
+    };
+
+    // Enviar heartbeat inmediatamente al montar
+    sendHeartbeat();
+
+    // Luego cada 15 segundos
+    const interval = setInterval(sendHeartbeat, 15000);
+
+    return () => clearInterval(interval);
+  }, [userData]);
+
+  // Polling para cantidad de usuarios activos (cada 5 segundos)
+  useEffect(() => {
+    const checkActiveUsers = async () => {
+      try {
+        const response = await axios.get('http://localhost:3001/api/messages/active/count');
+        if (response.data.success) {
+          setActiveUsersCount(response.data.count);
+        }
+      } catch (error) {
+        console.error('Error obteniendo usuarios activos:', error);
+      }
+    };
+
+    const interval = setInterval(checkActiveUsers, 5000);
+    checkActiveUsers(); // Ejecutar inmediatamente
+
+    return () => clearInterval(interval);
+  }, []);
 
   // Auto-scroll al final
   useEffect(() => {
@@ -397,7 +439,13 @@ const GroupChat = ({ userData }) => {
       <div className="chat-header">
         <div className="chat-header-info">
           <h3>💬 Chat Comunitario</h3>
-          <p>{messages.length} mensajes</p>
+          <div className="chat-stats">
+            <p>{messages.length} mensajes</p>
+            <p className="active-users">
+              <span className="online-dot"></span>
+              {activeUsersCount} {activeUsersCount === 1 ? 'conectado' : 'conectados'}
+            </p>
+          </div>
         </div>
       </div>
 

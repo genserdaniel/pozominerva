@@ -8,6 +8,7 @@ const Reaction = require('../models/Reaction');
 const { isBotTyping } = require('../services/botAnalyzer');
 const { setUserTyping, removeUserTyping, getTypingUsers } = require('../services/typingTracker');
 const { analyzeMultimedia } = require('../services/geminiAnalyzer');
+const { setUserActive, getActiveUsers, getActiveUsersCount } = require('../services/activeUsersTracker');
 
 // Crear directorio para uploads si no existe
 const uploadsDir = path.join(__dirname, '../uploads');
@@ -391,6 +392,81 @@ router.get('/typing', (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error al obtener usuarios escribiendo',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/messages/active/heartbeat
+ * Registrar que un usuario está activo (heartbeat)
+ */
+router.post('/active/heartbeat', (req, res) => {
+  try {
+    const { userName, userColonia } = req.body;
+
+    if (!userName || !userColonia) {
+      return res.status(400).json({
+        success: false,
+        message: 'Se requiere userName y userColonia'
+      });
+    }
+
+    setUserActive(userName, userColonia);
+
+    res.json({
+      success: true,
+      message: 'Heartbeat registrado'
+    });
+  } catch (error) {
+    console.error('Error registrando heartbeat:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al registrar heartbeat',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/messages/active
+ * Obtener lista de usuarios activos
+ */
+router.get('/active', (req, res) => {
+  try {
+    const activeUsers = getActiveUsers();
+
+    res.json({
+      success: true,
+      data: activeUsers
+    });
+  } catch (error) {
+    console.error('Error obteniendo usuarios activos:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener usuarios activos',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/messages/active/count
+ * Obtener cantidad de usuarios activos
+ */
+router.get('/active/count', (req, res) => {
+  try {
+    const count = getActiveUsersCount();
+
+    res.json({
+      success: true,
+      count: count
+    });
+  } catch (error) {
+    console.error('Error obteniendo cantidad de usuarios activos:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener cantidad',
       error: error.message
     });
   }

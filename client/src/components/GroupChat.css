@@ -29,6 +29,38 @@
   opacity: 0.8;
 }
 
+.chat-stats {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+}
+
+.active-users {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.online-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background-color: #25d366;
+  border-radius: 50%;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(0.9);
+  }
+}
+
 /* Messages Area */
 .chat-messages {
   flex: 1;
