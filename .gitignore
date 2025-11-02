@@ -44,3 +44,6 @@ coverage/
 # client/public/videos/*.mp4
 # client/public/audio/*.mp3
 # client/public/pdfs/*.pdf
+
+# Uploads del chat (archivos multimedia subidos por usuarios)
+server/uploads/

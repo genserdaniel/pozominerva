@@ -14,6 +14,7 @@ class Message {
         m.media_type,
         m.media_url,
         m.media_filename,
+        m.media_analysis,
         m.reply_to_id,
         m.is_bot,
         m.analyzed_by_bot,
@@ -33,12 +34,12 @@ class Message {
   /**
    * Crear un nuevo mensaje
    */
-  static async create({ userName, userColonia, messageText, mediaType = 'none', mediaUrl = null, mediaFilename = null, replyToId = null, isBot = false }) {
+  static async create({ userName, userColonia, messageText, mediaType = 'none', mediaUrl = null, mediaFilename = null, mediaAnalysis = null, replyToId = null, isBot = false }) {
     const [result] = await promisePool.query(`
       INSERT INTO messages
-      (user_name, user_colonia, message_text, media_type, media_url, media_filename, reply_to_id, is_bot)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `, [userName, userColonia, messageText, mediaType, mediaUrl, mediaFilename, replyToId, isBot]);
+      (user_name, user_colonia, message_text, media_type, media_url, media_filename, media_analysis, reply_to_id, is_bot)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [userName, userColonia, messageText, mediaType, mediaUrl, mediaFilename, mediaAnalysis, replyToId, isBot]);
 
     return result.insertId;
   }
@@ -49,21 +50,27 @@ class Message {
   static async getUnanalyzedRecent() {
     const [rows] = await promisePool.query(`
       SELECT
-        id,
-        user_name,
-        user_colonia,
-        message_text,
-        media_type,
-        media_url,
-        media_filename,
-        reply_to_id,
-        is_bot,
-        created_at
-      FROM messages
-      WHERE analyzed_by_bot = FALSE
-        AND is_bot = FALSE
-        AND created_at >= DATE_SUB(NOW(), INTERVAL 1 MINUTE)
-      ORDER BY created_at ASC
+        m.id,
+        m.user_name,
+        m.user_colonia,
+        m.message_text,
+        m.media_type,
+        m.media_url,
+        m.media_filename,
+        m.media_analysis,
+        m.reply_to_id,
+        m.is_bot,
+        m.created_at,
+        r.user_name AS reply_to_user_name,
+        r.message_text AS reply_to_message_text,
+        r.media_type AS reply_to_media_type,
+        r.media_analysis AS reply_to_media_analysis
+      FROM messages m
+      LEFT JOIN messages r ON m.reply_to_id = r.id
+      WHERE m.analyzed_by_bot = FALSE
+        AND m.is_bot = FALSE
+        AND m.created_at >= DATE_SUB(NOW(), INTERVAL 1 MINUTE)
+      ORDER BY m.created_at ASC
     `);
 
     return rows;
@@ -112,6 +119,7 @@ class Message {
         m.media_type,
         m.media_url,
         m.media_filename,
+        m.media_analysis,
         m.reply_to_id,
         m.is_bot,
         m.analyzed_by_bot,

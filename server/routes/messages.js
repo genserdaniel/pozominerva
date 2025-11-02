@@ -4,7 +4,10 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const Message = require('../models/Message');
+const Reaction = require('../models/Reaction');
 const { isBotTyping } = require('../services/botAnalyzer');
+const { setUserTyping, removeUserTyping, getTypingUsers } = require('../services/typingTracker');
+const { analyzeMultimedia } = require('../services/geminiAnalyzer');
 
 // Crear directorio para uploads si no existe
 const uploadsDir = path.join(__dirname, '../uploads');
@@ -118,6 +121,7 @@ router.post('/', upload.single('media'), async (req, res) => {
     let mediaType = 'none';
     let mediaUrl = null;
     let mediaFilename = null;
+    let mediaAnalysis = null;
 
     if (req.file) {
       mediaFilename = req.file.filename;
@@ -130,6 +134,16 @@ router.post('/', upload.single('media'), async (req, res) => {
       } else if (req.file.mimetype.startsWith('video/')) {
         mediaType = 'video';
       }
+
+      // Analizar multimedia con Gemini inmediatamente
+      try {
+        console.log(`🎬 Analizando ${mediaType} con Gemini: ${mediaFilename}`);
+        mediaAnalysis = await analyzeMultimedia(mediaFilename, mediaType);
+        console.log(`✅ Análisis completado y guardado en metadata`);
+      } catch (error) {
+        console.error(`❌ Error analizando ${mediaType}:`, error);
+        // Continuar sin análisis
+      }
     }
 
     // Crear mensaje
@@ -140,6 +154,7 @@ router.post('/', upload.single('media'), async (req, res) => {
       mediaType,
       mediaUrl,
       mediaFilename,
+      mediaAnalysis,
       replyToId: replyToId || null,
       isBot: false
     });
@@ -181,6 +196,204 @@ router.get('/bot/typing', (req, res) => {
     success: true,
     isTyping: isBotTyping()
   });
+});
+
+/**
+ * POST /api/messages/:messageId/reactions
+ * Agregar o actualizar reacción a un mensaje
+ */
+router.post('/:messageId/reactions', async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const { userName, userColonia, emoji } = req.body;
+
+    // Validación
+    if (!userName || !userColonia || !emoji) {
+      return res.status(400).json({
+        success: false,
+        message: 'Se requiere userName, userColonia y emoji'
+      });
+    }
+
+    // Verificar que el mensaje existe
+    const message = await Message.getById(messageId);
+    if (!message) {
+      return res.status(404).json({
+        success: false,
+        message: 'Mensaje no encontrado'
+      });
+    }
+
+    // Agregar o actualizar reacción
+    await Reaction.addOrUpdate({
+      messageId,
+      userName,
+      userColonia,
+      emoji
+    });
+
+    // Obtener reacciones actualizadas del mensaje
+    const reactions = await Reaction.getByMessage(messageId);
+
+    res.json({
+      success: true,
+      data: reactions
+    });
+
+  } catch (error) {
+    console.error('Error agregando reacción:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al agregar reacción',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * DELETE /api/messages/:messageId/reactions
+ * Eliminar reacción de un usuario
+ */
+router.delete('/:messageId/reactions', async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const { userName } = req.body;
+
+    // Validación
+    if (!userName) {
+      return res.status(400).json({
+        success: false,
+        message: 'Se requiere userName'
+      });
+    }
+
+    // Eliminar reacción
+    await Reaction.remove({ messageId, userName });
+
+    // Obtener reacciones actualizadas del mensaje
+    const reactions = await Reaction.getByMessage(messageId);
+
+    res.json({
+      success: true,
+      data: reactions
+    });
+
+  } catch (error) {
+    console.error('Error eliminando reacción:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al eliminar reacción',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/messages/:messageId/reactions
+ * Obtener reacciones de un mensaje
+ */
+router.get('/:messageId/reactions', async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const reactions = await Reaction.getByMessage(messageId);
+
+    res.json({
+      success: true,
+      data: reactions
+    });
+
+  } catch (error) {
+    console.error('Error obteniendo reacciones:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener reacciones',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/messages/typing/start
+ * Notificar que un usuario está escribiendo
+ */
+router.post('/typing/start', (req, res) => {
+  try {
+    const { userName, userColonia } = req.body;
+
+    if (!userName || !userColonia) {
+      return res.status(400).json({
+        success: false,
+        message: 'Se requiere userName y userColonia'
+      });
+    }
+
+    setUserTyping(userName, userColonia);
+
+    res.json({
+      success: true,
+      message: 'Estado de escritura actualizado'
+    });
+  } catch (error) {
+    console.error('Error actualizando estado de escritura:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al actualizar estado',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/messages/typing/stop
+ * Notificar que un usuario dejó de escribir
+ */
+router.post('/typing/stop', (req, res) => {
+  try {
+    const { userName, userColonia } = req.body;
+
+    if (!userName || !userColonia) {
+      return res.status(400).json({
+        success: false,
+        message: 'Se requiere userName y userColonia'
+      });
+    }
+
+    removeUserTyping(userName, userColonia);
+
+    res.json({
+      success: true,
+      message: 'Estado de escritura removido'
+    });
+  } catch (error) {
+    console.error('Error removiendo estado de escritura:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al remover estado',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/messages/typing
+ * Obtener lista de usuarios escribiendo actualmente
+ */
+router.get('/typing', (req, res) => {
+  try {
+    const typingUsers = getTypingUsers();
+
+    res.json({
+      success: true,
+      data: typingUsers
+    });
+  } catch (error) {
+    console.error('Error obteniendo usuarios escribiendo:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener usuarios escribiendo',
+      error: error.message
+    });
+  }
 });
 
 module.exports = router;

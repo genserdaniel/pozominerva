@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-import { FiSend, FiPaperclip, FiX, FiImage, FiMic, FiVideo } from 'react-icons/fi';
+import { FiSend, FiPaperclip, FiX, FiImage, FiMic, FiVideo, FiSmile } from 'react-icons/fi';
 import './GroupChat.css';
 
 const GroupChat = ({ userData }) => {
@@ -12,9 +12,14 @@ const GroupChat = ({ userData }) => {
   const [replyTo, setReplyTo] = useState(null);
   const [lastTimestamp, setLastTimestamp] = useState(null);
   const [botTyping, setBotTyping] = useState(false);
+  const [reactions, setReactions] = useState({});
+  const [showEmojiPicker, setShowEmojiPicker] = useState(null);
+  const [typingUsers, setTypingUsers] = useState([]);
 
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  const emojiPickerRef = useRef(null);
+  const typingTimeoutRef = useRef(null);
 
   // Cargar mensajes iniciales
   useEffect(() => {
@@ -51,10 +56,33 @@ const GroupChat = ({ userData }) => {
     return () => clearInterval(interval);
   }, []);
 
+  // Polling para usuarios escribiendo (cada 2 segundos)
+  useEffect(() => {
+    const checkTypingUsers = async () => {
+      try {
+        const response = await axios.get('http://localhost:3001/api/messages/typing');
+        if (response.data.success) {
+          // Filtrar usuarios escribiendo (excluir al usuario actual)
+          const otherUsersTyping = response.data.data.filter(u =>
+            !(u.userName === userData.nombre && u.userColonia === userData.colonia)
+          );
+          setTypingUsers(otherUsersTyping);
+        }
+      } catch (error) {
+        console.error('Error verificando usuarios escribiendo:', error);
+      }
+    };
+
+    const interval = setInterval(checkTypingUsers, 2000);
+    checkTypingUsers(); // Ejecutar inmediatamente
+
+    return () => clearInterval(interval);
+  }, [userData]);
+
   // Auto-scroll al final
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, typingUsers]); // También scroll cuando cambia typing
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -85,6 +113,134 @@ const GroupChat = ({ userData }) => {
       }
     } catch (error) {
       console.error('Error polling mensajes:', error);
+    }
+  };
+
+  // Cerrar selector de emojis al hacer clic fuera
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (emojiPickerRef.current && !emojiPickerRef.current.contains(event.target)) {
+        setShowEmojiPicker(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Cargar reacciones cuando cambian los mensajes
+  useEffect(() => {
+    if (messages.length > 0) {
+      loadReactions();
+    }
+  }, [messages]);
+
+  const loadReactions = async () => {
+    try {
+      const messageIds = messages.map(m => m.id);
+      const reactionsData = {};
+
+      // Cargar reacciones para todos los mensajes
+      await Promise.all(messageIds.map(async (id) => {
+        const response = await axios.get(`http://localhost:3001/api/messages/${id}/reactions`);
+        if (response.data.success) {
+          reactionsData[id] = response.data.data;
+        }
+      }));
+
+      setReactions(reactionsData);
+    } catch (error) {
+      console.error('Error cargando reacciones:', error);
+    }
+  };
+
+  const handleReaction = async (messageId, emoji) => {
+    try {
+      // Verificar si el usuario ya reaccionó con este emoji
+      const messageReactions = reactions[messageId] || [];
+      const existingReaction = messageReactions.find(r =>
+        r.emoji === emoji && r.users?.split(',').includes(userData.nombre)
+      );
+
+      if (existingReaction) {
+        // Eliminar reacción
+        await axios.delete(`http://localhost:3001/api/messages/${messageId}/reactions`, {
+          data: {
+            userName: userData.nombre
+          }
+        });
+      } else {
+        // Agregar reacción
+        await axios.post(`http://localhost:3001/api/messages/${messageId}/reactions`, {
+          userName: userData.nombre,
+          userColonia: userData.colonia,
+          emoji
+        });
+      }
+
+      // Recargar reacciones del mensaje
+      const response = await axios.get(`http://localhost:3001/api/messages/${messageId}/reactions`);
+      if (response.data.success) {
+        setReactions(prev => ({
+          ...prev,
+          [messageId]: response.data.data
+        }));
+      }
+
+      setShowEmojiPicker(null);
+    } catch (error) {
+      console.error('Error manejando reacción:', error);
+    }
+  };
+
+  // Notificar al backend que el usuario está escribiendo
+  const notifyTypingStart = async () => {
+    try {
+      await axios.post('http://localhost:3001/api/messages/typing/start', {
+        userName: userData.nombre,
+        userColonia: userData.colonia
+      });
+    } catch (error) {
+      console.error('Error notificando typing start:', error);
+    }
+  };
+
+  // Notificar al backend que el usuario dejó de escribir
+  const notifyTypingStop = async () => {
+    try {
+      await axios.post('http://localhost:3001/api/messages/typing/stop', {
+        userName: userData.nombre,
+        userColonia: userData.colonia
+      });
+    } catch (error) {
+      console.error('Error notificando typing stop:', error);
+    }
+  };
+
+  // Manejar cambio en el input de mensaje
+  const handleMessageInputChange = (e) => {
+    const value = e.target.value;
+    setNewMessage(value);
+
+    // Si está escribiendo, notificar al backend
+    if (value.trim().length > 0) {
+      notifyTypingStart();
+
+      // Cancelar timeout anterior
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+
+      // Configurar nuevo timeout para dejar de escribir después de 3 segundos
+      typingTimeoutRef.current = setTimeout(() => {
+        notifyTypingStop();
+      }, 3000);
+    } else {
+      // Si el input está vacío, dejar de escribir inmediatamente
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      notifyTypingStop();
     }
   };
 
@@ -125,6 +281,12 @@ const GroupChat = ({ userData }) => {
     if (!newMessage.trim() && !selectedFile) {
       return;
     }
+
+    // Limpiar timeout de typing y notificar que dejó de escribir
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+    notifyTypingStop();
 
     setSending(true);
 
@@ -272,16 +434,64 @@ const GroupChat = ({ userData }) => {
                     <div className="message-text">{msg.message_text}</div>
                   )}
 
+                  {/* Mostrar reacciones existentes */}
+                  {reactions[msg.id] && reactions[msg.id].length > 0 && (
+                    <div className="message-reactions">
+                      {reactions[msg.id].map((reaction, idx) => {
+                        const users = reaction.users.split(',');
+                        const hasUserReacted = users.includes(userData.nombre);
+
+                        return (
+                          <button
+                            key={idx}
+                            className={`reaction-bubble ${hasUserReacted ? 'user-reacted' : ''}`}
+                            onClick={() => handleReaction(msg.id, reaction.emoji)}
+                            title={users.join(', ')}
+                          >
+                            {reaction.emoji} {reaction.count}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
                   <div className="message-footer">
                     <span className="message-time">{formatTime(msg.created_at)}</span>
-                    {!msg.is_bot && msg.user_name !== userData.nombre && (
+
+                    <div className="message-actions">
+                      {/* Botón para reaccionar */}
+                      <div className="reaction-container" ref={showEmojiPicker === msg.id ? emojiPickerRef : null}>
+                        <button
+                          className="react-btn"
+                          onClick={() => setShowEmojiPicker(showEmojiPicker === msg.id ? null : msg.id)}
+                        >
+                          <FiSmile />
+                        </button>
+
+                        {/* Selector de emojis */}
+                        {showEmojiPicker === msg.id && (
+                          <div className="emoji-picker">
+                            {['👍', '❤️', '😂', '😮', '😢', '🙏', '👏', '🔥'].map((emoji) => (
+                              <button
+                                key={emoji}
+                                className="emoji-option"
+                                onClick={() => handleReaction(msg.id, emoji)}
+                              >
+                                {emoji}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Botón para responder */}
                       <button
                         className="reply-btn"
                         onClick={() => setReplyTo(msg)}
                       >
                         Responder
                       </button>
-                    )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -296,6 +506,27 @@ const GroupChat = ({ userData }) => {
               <div className="message-header">
                 <span className="message-author">🤖 PozoBot</span>
                 <span className="message-colonia">Sistema</span>
+              </div>
+              <div className="typing-animation">
+                <span></span>
+                <span></span>
+                <span></span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Indicador de usuarios escribiendo */}
+        {typingUsers.length > 0 && (
+          <div className="message-wrapper">
+            <div className="message-bubble typing-indicator">
+              <div className="message-header">
+                <span className="message-author">
+                  {typingUsers.map(u => `${u.userName} (${u.userColonia})`).join(', ')}
+                </span>
+              </div>
+              <div className="typing-text">
+                {typingUsers.length === 1 ? 'está escribiendo...' : 'están escribiendo...'}
               </div>
               <div className="typing-animation">
                 <span></span>
@@ -364,7 +595,7 @@ const GroupChat = ({ userData }) => {
             className="message-input"
             placeholder="Escribe un mensaje..."
             value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
+            onChange={handleMessageInputChange}
             disabled={sending}
           />
 

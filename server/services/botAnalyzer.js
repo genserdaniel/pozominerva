@@ -1,6 +1,7 @@
 const Message = require('../models/Message');
 const { openai, config, systemPrompt } = require('../config/openai');
 const { loadPDFContext } = require('../utils/pdfContext');
+const { analyzeMultimedia } = require('./geminiAnalyzer');
 
 let isAnalyzing = false;
 let pdfContext = '';
@@ -26,31 +27,174 @@ async function analyzeRecentMessages() {
 
   try {
     // Obtener mensajes no analizados del último minuto
-    const messages = await Message.getUnanalyzedRecent();
+    const newMessages = await Message.getUnanalyzedRecent();
 
-    if (messages.length === 0) {
+    if (newMessages.length === 0) {
       return; // No hay mensajes nuevos - NO activamos el indicador
     }
 
     // SOLO activar el indicador cuando HAY mensajes que procesar
     isAnalyzing = true;
 
-    console.log(`🤖 PozoBot analizando ${messages.length} mensaje(s)...`);
+    console.log(`🤖 PozoBot analizando ${newMessages.length} mensaje(s)...`);
+
+    // Obtener últimos 20 mensajes para contexto
+    const recentMessages = await Message.getRecent(20);
 
     // Bitácora: Mostrar mensajes que se van a procesar
-    console.log('📋 BITÁCORA - Mensajes a procesar:');
-    messages.forEach((msg, index) => {
+    console.log('📋 BITÁCORA - Mensajes NUEVOS a procesar:');
+    newMessages.forEach((msg, index) => {
       const preview = msg.message_text ?
         (msg.message_text.length > 50 ? msg.message_text.substring(0, 50) + '...' : msg.message_text) :
         '[archivo multimedia]';
-      console.log(`   ${index + 1}. [ID: ${msg.id}] ${msg.user_name} (${msg.user_colonia}): ${preview}`);
+      const replyInfo = msg.reply_to_id ?
+        ` (respondiendo a ID ${msg.reply_to_id}: ${msg.reply_to_user_name})` : '';
+      console.log(`   ${index + 1}. [ID: ${msg.id}] ${msg.user_name} (${msg.user_colonia}): ${preview}${replyInfo}`);
     });
     console.log('---');
 
-    // Crear resumen de los mensajes
-    const messagesSummary = messages.map(m => {
-      return `[${m.user_name} (${m.user_colonia})]: ${m.message_text || '[archivo multimedia]'}`;
-    }).join('\n');
+    // Función para formatear un mensaje completo con toda su información
+    const formatMessageComplete = (msg) => {
+      let content = msg.message_text || '';
+
+      // Si tiene multimedia, usar análisis guardado en metadata
+      if (msg.media_type !== 'none' && msg.media_filename) {
+        let analysis;
+
+        // Usar análisis ya guardado en la BD
+        if (msg.media_analysis) {
+          analysis = msg.media_analysis;
+          console.log(`   📦 Usando análisis guardado en metadata: ${msg.media_filename}`);
+        } else {
+          // Fallback: si no tiene análisis (mensajes antiguos)
+          analysis = '[multimedia sin analizar]';
+          console.log(`   ⚠️  Mensaje sin análisis en metadata: ${msg.media_filename}`);
+        }
+
+        if (content) {
+          content = `${content}\n[${msg.media_type.toUpperCase()}: ${analysis}]`;
+        } else {
+          content = `[${msg.media_type.toUpperCase()}: ${analysis}]`;
+        }
+      }
+
+      // Formatear fecha completa
+      const date = new Date(msg.created_at);
+      const dateStr = date.toLocaleDateString('es-GT', { year: 'numeric', month: '2-digit', day: '2-digit' });
+      const timeStr = date.toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit' });
+
+      return `[${dateStr} ${timeStr}] ${msg.user_name} (${msg.user_colonia}): ${content}`;
+    };
+
+    // Función para obtener la cadena completa de respuestas recursivamente
+    const getReplyChain = async (message) => {
+      const chain = [];
+      let currentMsg = message;
+
+      // Seguir la cadena de respuestas hacia atrás hasta 5 niveles
+      for (let i = 0; i < 5 && currentMsg.reply_to_id; i++) {
+        const parentMsg = await Message.getById(currentMsg.reply_to_id);
+        if (parentMsg) {
+          // Guardar toda la información del mensaje
+          chain.push(parentMsg);
+          currentMsg = parentMsg;
+        } else {
+          break;
+        }
+      }
+
+      return chain;
+    };
+
+    // Función para procesar mensajes de CONTEXTO (sin analizar multimedia de nuevo)
+    const processContextMessage = (m) => {
+      let content = m.message_text || '';
+
+      // Para mensajes de contexto, solo mencionar que hay multimedia sin analizarlo
+      if (m.media_type !== 'none' && m.media_filename) {
+        if (content) {
+          content = `${content} [${m.media_type}]`;
+        } else {
+          content = `[${m.media_type}]`;
+        }
+      }
+
+      // Agregar información de respuesta si existe
+      let prefix = '';
+      if (m.reply_to_id && m.reply_to_user_name) {
+        const replyText = m.reply_to_message_text || '[multimedia]';
+        prefix = `(respondiendo a ${m.reply_to_user_name}: "${replyText}") `;
+      }
+
+      // Formatear fecha completa
+      const date = new Date(m.created_at);
+      const dateStr = date.toLocaleDateString('es-GT', { year: 'numeric', month: '2-digit', day: '2-digit' });
+      const timeStr = date.toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit' });
+
+      return `[${dateStr} ${timeStr}] ${m.user_name} (${m.user_colonia}): ${prefix}${content}`;
+    };
+
+    // Función para procesar mensajes NUEVOS (usando metadata)
+    const processNewMessage = async (m) => {
+      let content = m.message_text || '';
+
+      // Usar análisis ya guardado en metadata
+      if (m.media_type !== 'none' && m.media_filename) {
+        let analysis;
+
+        if (m.media_analysis) {
+          analysis = m.media_analysis;
+          console.log(`   📦 Usando análisis guardado en metadata: ${m.media_filename}`);
+        } else {
+          // Fallback: si no tiene análisis (mensajes antiguos)
+          analysis = '[multimedia sin analizar]';
+          console.log(`   ⚠️  Mensaje sin análisis en metadata: ${m.media_filename}`);
+        }
+
+        // Si hay texto Y multimedia, combinar ambos
+        if (content) {
+          content = `${content}\n[${m.media_type.toUpperCase()}: ${analysis}]`;
+        } else {
+          content = `[${m.media_type.toUpperCase()}: ${analysis}]`;
+        }
+      }
+
+      // Formatear fecha completa del mensaje actual
+      const date = new Date(m.created_at);
+      const dateStr = date.toLocaleDateString('es-GT', { year: 'numeric', month: '2-digit', day: '2-digit' });
+      const timeStr = date.toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit' });
+
+      // Construir el mensaje principal
+      let result = `[${dateStr} ${timeStr}] ${m.user_name} (${m.user_colonia}): ${content}`;
+
+      // Obtener cadena completa de respuestas recursivamente
+      if (m.reply_to_id) {
+        const replyChain = await getReplyChain(m);
+
+        if (replyChain.length > 0) {
+          // Formatear cada mensaje de la cadena con toda su información
+          const chainFormatted = replyChain.reverse().map(msg => formatMessageComplete(msg));
+          const chainText = chainFormatted.join('\n   → ');
+
+          // Agregar el contexto DESPUÉS del mensaje principal
+          result += `\n\n   Respondiendo a:\n   → ${chainText}`;
+
+          console.log(`   🔗 Cadena de respuestas detectada con ${replyChain.length} nivel(es):`);
+          chainFormatted.forEach((formattedMsg, idx) => {
+            console.log(`      ${idx + 1}. ${formattedMsg}`);
+          });
+        }
+      }
+
+      return result;
+    };
+
+    // Procesar mensajes de contexto SIN analizar multimedia
+    const contextSummary = recentMessages.map(processContextMessage).join('\n');
+
+    // Procesar mensajes nuevos CON análisis de multimedia
+    const newMessagesSummaryPromises = newMessages.map(processNewMessage);
+    const newMessagesSummary = (await Promise.all(newMessagesSummaryPromises)).join('\n');
 
     // Crear prompt para la IA
     const analysisPrompt = `${systemPrompt}
@@ -61,14 +205,21 @@ ${pdfContext}
 
 ---
 
-NUEVOS MENSAJES EN EL CHAT GRUPAL:
+HISTORIAL RECIENTE DEL CHAT (últimos ${recentMessages.length} mensajes para contexto):
 
-${messagesSummary}
+${contextSummary}
+
+---
+
+MENSAJES NUEVOS QUE DEBES ANALIZAR:
+
+${newMessagesSummary}
 
 ---
 
 INSTRUCCIONES:
-Has detectado ${messages.length} mensaje(s) nuevo(s) en el chat grupal comunitario.
+Has detectado ${newMessages.length} mensaje(s) nuevo(s) en el chat grupal comunitario.
+Lee el HISTORIAL RECIENTE para entender el contexto de la conversación.
 
 DEBES RESPONDER a cualquier pregunta sobre el proyecto del Pozo de Minerva, incluyendo:
 - Preguntas sobre ubicación, colonias afectadas, costos, plazos
@@ -83,13 +234,19 @@ SOLO NO respondas si:
 
 Si decides NO responder, di exactamente: "NO_RESPONDER"
 
-Si decides responder, escribe tu mensaje siguiendo estas reglas:
-- Máximo 2-3 párrafos cortos
-- Tono moderador y crítico
-- Usa "supuestamente" para información oficial
-- Menciona al menos uno de los 5 puntos de preocupación
-- Sé directo y sin rodeos
-- Responde SIEMPRE las preguntas directas`;
+Si decides responder:
+1. Busca la información específica en el CONTEXTO DEL PROYECTO para responder la pregunta
+2. Escribe tu respuesta de máximo 2-3 párrafos cortos
+3. Usa tono moderador y crítico
+4. Usa "supuestamente" para información oficial
+5. Sé directo y sin rodeos
+6. SIEMPRE cierra vinculando a UNO de los 5 puntos de preocupación que mejor encaje con la pregunta`;
+
+    // Mostrar el prompt completo que se enviará a OpenAI
+    console.log('📝 PROMPT COMPLETO A ENVIAR A OPENAI:');
+    console.log('─'.repeat(80));
+    console.log(analysisPrompt);
+    console.log('─'.repeat(80));
 
     // Llamar a OpenAI para análisis
     console.log('🔄 Llamando a OpenAI...');
@@ -121,12 +278,15 @@ Si decides responder, escribe tu mensaje siguiendo estas reglas:
     console.log('   Longitud:', botResponse.length, 'caracteres');
     console.log('---');
 
-    // Marcar mensajes como analizados
-    const messageIds = messages.map(m => m.id);
+    // Marcar mensajes NUEVOS como analizados
+    const messageIds = newMessages.map(m => m.id);
     await Message.markAsAnalyzed(messageIds);
 
     // Si decide responder, crear el mensaje del bot
     if (botResponse !== 'NO_RESPONDER' && botResponse.length > 0) {
+      // Responder al último mensaje analizado para mantener la cadena
+      const lastMessageId = newMessages[newMessages.length - 1].id;
+
       await Message.create({
         userName: 'PozoBot',
         userColonia: 'Sistema',
@@ -134,11 +294,11 @@ Si decides responder, escribe tu mensaje siguiendo estas reglas:
         mediaType: 'none',
         mediaUrl: null,
         mediaFilename: null,
-        replyToId: null,
+        replyToId: lastMessageId,  // Responder al último mensaje
         isBot: true
       });
 
-      console.log('🤖 PozoBot respondió en el chat');
+      console.log(`🤖 PozoBot respondió en el chat (respondiendo a mensaje ID ${lastMessageId})`);
     } else {
       console.log('🤖 PozoBot decidió no responder');
     }
