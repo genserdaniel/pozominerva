@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import axios from 'axios';
-import { FiSend, FiPaperclip, FiX, FiImage, FiMic, FiVideo, FiSmile } from 'react-icons/fi';
+import { FiSend, FiPaperclip, FiX, FiSmile } from 'react-icons/fi';
 import './GroupChat.css';
 
-const GroupChat = ({ userData }) => {
+const GroupChat = forwardRef(({ userData }, ref) => {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
@@ -16,11 +16,13 @@ const GroupChat = ({ userData }) => {
   const [showEmojiPicker, setShowEmojiPicker] = useState(null);
   const [typingUsers, setTypingUsers] = useState([]);
   const [activeUsersCount, setActiveUsersCount] = useState(0);
+  const [isNearBottom, setIsNearBottom] = useState(true);
 
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const emojiPickerRef = useRef(null);
   const typingTimeoutRef = useRef(null);
+  const chatMessagesRef = useRef(null);
 
   // Cargar mensajes iniciales
   useEffect(() => {
@@ -121,14 +123,53 @@ const GroupChat = ({ userData }) => {
     return () => clearInterval(interval);
   }, []);
 
-  // Auto-scroll al final
+  // Detectar si el usuario está cerca del final del scroll
+  const checkIfNearBottom = () => {
+    const container = chatMessagesRef.current;
+    if (!container) return true;
+
+    const threshold = 150; // píxeles desde el final
+    const position = container.scrollHeight - container.scrollTop - container.clientHeight;
+    return position < threshold;
+  };
+
+  // Manejar evento de scroll para detectar posición del usuario
+  const handleScroll = () => {
+    setIsNearBottom(checkIfNearBottom());
+  };
+
+  // Auto-scroll inteligente: solo si está cerca del final
   useEffect(() => {
-    scrollToBottom();
-  }, [messages, typingUsers]); // También scroll cuando cambia typing
+    if (isNearBottom) {
+      scrollToBottom();
+    }
+  }, [messages, typingUsers, isNearBottom]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
+
+  // Función para hacer scroll a un mensaje específico por ID
+  const scrollToMessage = (messageId) => {
+    // Buscar el elemento del mensaje por ID
+    const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
+    if (messageElement) {
+      // Desactivar el auto-scroll para que el usuario pueda ver el mensaje
+      setIsNearBottom(false);
+      // Hacer scroll al mensaje con smooth behavior
+      messageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Agregar un efecto visual temporal (highlight)
+      messageElement.classList.add('message-highlight');
+      setTimeout(() => {
+        messageElement.classList.remove('message-highlight');
+      }, 2000);
+    }
+  };
+
+  // Exponer las funciones al componente padre
+  useImperativeHandle(ref, () => ({
+    scrollToMessage
+  }));
 
   const loadMessages = async () => {
     try {
@@ -175,6 +216,18 @@ const GroupChat = ({ userData }) => {
     if (messages.length > 0) {
       loadReactions();
     }
+  }, [messages]);
+
+  // Polling para reacciones (cada 3 segundos)
+  useEffect(() => {
+    const pollReactions = async () => {
+      if (messages.length > 0) {
+        await loadReactions();
+      }
+    };
+
+    const interval = setInterval(pollReactions, 3000);
+    return () => clearInterval(interval);
   }, [messages]);
 
   const loadReactions = async () => {
@@ -357,7 +410,16 @@ const GroupChat = ({ userData }) => {
         setSelectedFile(null);
         setFilePreview(null);
         setReplyTo(null);
-        loadMessages();
+
+        // Forzar scroll al final cuando el usuario envía su propio mensaje
+        setIsNearBottom(true);
+
+        await loadMessages();
+
+        // Scroll inmediato después de cargar mensajes
+        setTimeout(() => {
+          scrollToBottom();
+        }, 100);
       }
     } catch (error) {
       console.error('Error enviando mensaje:', error);
@@ -396,13 +458,22 @@ const GroupChat = ({ userData }) => {
       case 'image':
         return (
           <div className="message-media">
-            <img src={mediaUrl} alt="Imagen compartida" />
+            <img
+              src={mediaUrl}
+              alt="Imagen compartida"
+              onContextMenu={e => e.preventDefault()}
+              draggable={false}
+            />
           </div>
         );
       case 'audio':
         return (
           <div className="message-media">
-            <audio controls>
+            <audio
+              controls
+              controlsList="nodownload"
+              onContextMenu={e => e.preventDefault()}
+            >
               <source src={mediaUrl} />
             </audio>
           </div>
@@ -410,7 +481,12 @@ const GroupChat = ({ userData }) => {
       case 'video':
         return (
           <div className="message-media">
-            <video controls width="100%">
+            <video
+              controls
+              width="100%"
+              controlsList="nodownload"
+              onContextMenu={e => e.preventDefault()}
+            >
               <source src={mediaUrl} />
             </video>
           </div>
@@ -449,7 +525,7 @@ const GroupChat = ({ userData }) => {
         </div>
       </div>
 
-      <div className="chat-messages">
+      <div className="chat-messages" ref={chatMessagesRef} onScroll={handleScroll}>
         {Object.keys(groupedMessages).map((date, idx) => (
           <div key={idx}>
             <div className="date-divider">
@@ -459,6 +535,7 @@ const GroupChat = ({ userData }) => {
             {groupedMessages[date].map((msg) => (
               <div
                 key={msg.id}
+                data-message-id={msg.id}
                 className={`message-wrapper ${msg.is_bot ? 'bot-message' : ''} ${msg.user_name === userData.nombre && msg.user_colonia === userData.colonia ? 'own-message' : ''}`}
               >
                 <div className="message-bubble">
@@ -658,6 +735,6 @@ const GroupChat = ({ userData }) => {
       </div>
     </div>
   );
-};
+});
 
 export default GroupChat;

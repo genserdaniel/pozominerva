@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
@@ -12,6 +12,14 @@ import './styles/App.css';
 function App() {
   const [showModal, setShowModal] = useState(false);
   const [userData, setUserData] = useState(null);
+  const groupChatRef = useRef(null);
+
+  // Función para hacer scroll al mensaje del podcast en el chat
+  const handleScrollToPodcast = (messageId) => {
+    if (groupChatRef.current && groupChatRef.current.scrollToMessage) {
+      groupChatRef.current.scrollToMessage(messageId);
+    }
+  };
 
   useEffect(() => {
     // Verificar si el usuario ya está registrado
@@ -54,10 +62,12 @@ function App() {
         <Footer />
 
         {/* Reproductor de podcast sticky */}
-        <PodcastPlayer />
+        <PodcastPlayer
+          onScrollToPodcast={handleScrollToPodcast}
+        />
 
         {/* Chat Grupal - solo visible si el usuario está registrado */}
-        {userData && <GroupChat userData={userData} />}
+        {userData && <GroupChat ref={groupChatRef} userData={userData} />}
       </div>
     </Router>
   );

@@ -7,8 +7,8 @@ const Message = require('../models/Message');
 const Reaction = require('../models/Reaction');
 const { isBotTyping } = require('../services/botAnalyzer');
 const { setUserTyping, removeUserTyping, getTypingUsers } = require('../services/typingTracker');
-const { analyzeMultimedia } = require('../services/geminiAnalyzer');
 const { setUserActive, getActiveUsers, getActiveUsersCount } = require('../services/activeUsersTracker');
+const { promisePool } = require('../config/db');
 
 // Crear directorio para uploads si no existe
 const uploadsDir = path.join(__dirname, '../uploads');
@@ -136,15 +136,8 @@ router.post('/', upload.single('media'), async (req, res) => {
         mediaType = 'video';
       }
 
-      // Analizar multimedia con Gemini inmediatamente
-      try {
-        console.log(`🎬 Analizando ${mediaType} con Gemini: ${mediaFilename}`);
-        mediaAnalysis = await analyzeMultimedia(mediaFilename, mediaType);
-        console.log(`✅ Análisis completado y guardado en metadata`);
-      } catch (error) {
-        console.error(`❌ Error analizando ${mediaType}:`, error);
-        // Continuar sin análisis
-      }
+      // NO analizar inmediatamente - PozoBot lo hará de forma asíncrona
+      console.log(`📤 Multimedia subida (${mediaType}): ${mediaFilename} - PozoBot la analizará`);
     }
 
     // Crear mensaje
@@ -467,6 +460,43 @@ router.get('/active/count', (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error al obtener cantidad',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/messages/podcast/id
+ * Obtener el ID del mensaje del podcast
+ */
+router.get('/podcast/id', async (req, res) => {
+  try {
+    // Buscar el mensaje del podcast
+    const [rows] = await promisePool.query(`
+      SELECT id FROM messages
+      WHERE user_name = 'Pozo Minerva'
+      AND user_colonia = 'Información'
+      AND media_type = 'audio'
+      ORDER BY created_at ASC
+      LIMIT 1
+    `);
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No se encontró el mensaje del podcast'
+      });
+    }
+
+    res.json({
+      success: true,
+      podcastMessageId: rows[0].id
+    });
+  } catch (error) {
+    console.error('Error obteniendo ID del podcast:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error al obtener ID del podcast',
       error: error.message
     });
   }

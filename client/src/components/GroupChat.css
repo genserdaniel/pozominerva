@@ -5,7 +5,7 @@
   max-height: 100vh;
   background-color: #e5ddd5;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  padding-bottom: 100px; /* Espacio para el podcast player */
+  padding-bottom: 70px; /* Espacio para el podcast player */
 }
 
 /* Header */
@@ -201,6 +201,10 @@
   max-width: 300px;
   display: block;
   border-radius: 4px;
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
 }
 
 .message-media audio,
@@ -515,10 +519,30 @@
   transform: scale(1.2);
 }
 
+/* Highlight effect for scrolled-to message */
+.message-wrapper.message-highlight {
+  animation: highlight-pulse 2s ease-in-out;
+}
+
+@keyframes highlight-pulse {
+  0% {
+    background-color: transparent;
+  }
+  20% {
+    background-color: #ffeb3b40;
+  }
+  80% {
+    background-color: #ffeb3b40;
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
 /* Mobile Responsive */
 @media (max-width: 768px) {
   .group-chat {
-    padding-bottom: 180px; /* Más espacio en móvil para podcast expandido */
+    padding-bottom: 80px; /* Más espacio en móvil para podcast expandido */
   }
 
   .message-bubble {
@@ -532,6 +556,6 @@
 
 @media (max-width: 480px) {
   .group-chat {
-    padding-bottom: 200px; /* Aún más espacio en pantallas muy pequeñas */
+    padding-bottom: 90px; /* Aún más espacio en pantallas muy pequeñas */
   }
 }

@@ -6,6 +6,7 @@ require('dotenv').config();
 const corsMiddleware = require('./middleware/cors');
 const { testConnection } = require('./config/db');
 const { startBotAnalyzer } = require('./services/botAnalyzer');
+const { ensureMultimediaAnalysis } = require('./services/ensureMultimediaAnalysis');
 
 // Importar rutas
 const commentsRouter = require('./routes/comments');
@@ -94,6 +95,15 @@ const startServer = async () => {
       console.warn('⚠️ No se pudo conectar a la base de datos. El servidor continuará pero algunas funciones no estarán disponibles.');
     }
 
+    // Iniciar servicios si la BD está conectada (ANTES de app.listen)
+    if (dbConnected) {
+      // Analizar todos los archivos multimedia que no tienen análisis
+      await ensureMultimediaAnalysis();
+
+      // Iniciar PozoBot analizador automático
+      startBotAnalyzer();
+    }
+
     app.listen(PORT, () => {
       console.log('');
       console.log('═══════════════════════════════════════════');
@@ -116,11 +126,6 @@ const startServer = async () => {
       console.log(`  GET  http://localhost:${PORT}/api/messages`);
       console.log(`  POST http://localhost:${PORT}/api/messages`);
       console.log('');
-
-      // Iniciar PozoBot analizador automático
-      if (dbConnected) {
-        startBotAnalyzer();
-      }
     });
   } catch (error) {
     console.error('❌ Error al iniciar el servidor:', error);

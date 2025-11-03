@@ -109,14 +109,22 @@ async function transcribeAudio(filePath, mimeType) {
 
 /**
  * Analizar multimedia según el tipo
- * @param {string} mediaFilename - Nombre del archivo multimedia
+ * @param {string} mediaFilename - Nombre del archivo multimedia o URL relativa
  * @param {string} mediaType - Tipo de multimedia ('image', 'video', 'audio')
  * @returns {Promise<string>} - Análisis del contenido multimedia
  */
 async function analyzeMultimedia(mediaFilename, mediaType) {
   try {
-    // Construir ruta absoluta al archivo
-    const filePath = path.join(__dirname, '../uploads', mediaFilename);
+    let filePath;
+
+    // Si comienza con '/', buscar en client/public (archivos estáticos)
+    if (mediaFilename.startsWith('/')) {
+      // Archivo estático en client/public (ej: /audio/podcast.mp3)
+      filePath = path.join(__dirname, '../../client/public', mediaFilename);
+    } else {
+      // Archivo subido en server/uploads
+      filePath = path.join(__dirname, '../uploads', mediaFilename);
+    }
 
     // Verificar que el archivo existe
     if (!fs.existsSync(filePath)) {

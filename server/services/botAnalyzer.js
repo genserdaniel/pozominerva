@@ -38,6 +38,30 @@ async function analyzeRecentMessages() {
 
     console.log(`🤖 PozoBot analizando ${newMessages.length} mensaje(s)...`);
 
+    // Primero, analizar multimedia de mensajes nuevos que no tienen análisis
+    for (const msg of newMessages) {
+      if (msg.media_type !== 'none' && !msg.media_analysis) {
+        try {
+          console.log(`🎬 Analizando ${msg.media_type} con Gemini: ${msg.media_filename || msg.media_url}`);
+          const fileToAnalyze = msg.media_filename || msg.media_url;
+          const analysis = await analyzeMultimedia(fileToAnalyze, msg.media_type);
+
+          // Guardar análisis en la base de datos
+          const { promisePool } = require('../config/db');
+          await promisePool.query(
+            'UPDATE messages SET media_analysis = ? WHERE id = ?',
+            [analysis, msg.id]
+          );
+
+          // Actualizar el objeto en memoria para usarlo inmediatamente
+          msg.media_analysis = analysis;
+          console.log(`✅ Análisis completado y guardado para mensaje ID ${msg.id}`);
+        } catch (error) {
+          console.error(`❌ Error analizando multimedia del mensaje ${msg.id}:`, error.message);
+        }
+      }
+    }
+
     // Obtener últimos 20 mensajes para contexto
     const recentMessages = await Message.getRecent(20);
 
