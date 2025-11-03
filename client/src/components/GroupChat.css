@@ -172,6 +172,13 @@
   margin-bottom: 6px;
   border-radius: 4px;
   font-size: 13px;
+  transition: all 0.2s ease;
+}
+
+.reply-preview:hover {
+  background-color: rgba(0, 0, 0, 0.1);
+  border-left-color: #25d366;
+  transform: translateX(2px);
 }
 
 .reply-preview strong {

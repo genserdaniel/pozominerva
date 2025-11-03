@@ -540,7 +540,11 @@ const GroupChat = forwardRef(({ userData }, ref) => {
               >
                 <div className="message-bubble">
                   {msg.reply_to_id && (
-                    <div className="reply-preview">
+                    <div
+                      className="reply-preview"
+                      onClick={() => scrollToMessage(msg.reply_to_id)}
+                      style={{ cursor: 'pointer' }}
+                    >
                       <strong>{msg.reply_to_user_name}</strong>
                       <p>{msg.reply_to_message_text || '[Multimedia]'}</p>
                     </div>
